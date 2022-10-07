@@ -285,6 +285,7 @@ function process_screen(ts::TerminalScreen)
         if control != nothing
             # Execute the touch action.
             process_touch(ts, control, action)
+            draw_screen(ts)
         end
     end
 end
@@ -328,7 +329,9 @@ function process_touch(ts, control, action)
 
     finally
         # Remove the control highlight.
-        set_style(ts, inv(style), control)
+        if ts.is_open
+            set_style(ts, inv(style), control)
+        end
     end
 end
 
@@ -353,7 +356,7 @@ const ANSI_RESET_SCROLL_ROWS            = @CSI r
       ANSI_SET_CURSOR(row, col=1)       = @CSI H(row, col)
 const ANSI_CLEAR_END                    = @CSI K(0)
 const ANSI_CLEAR_TO_TOP                 = @CSI J(1)
-const ANSI_CLEAR_SCREEN                 = @CSI J
+const ANSI_CLEAR_SCREEN                 = @CSI J(2)
 const ANSI_HIDE_CURSOR                  = @CSI l("?25")
 const ANSI_SHOW_CURSOR                  = @CSI h("?25")
 const ANSI_SAVE_CURSOR                  = "\e7"
