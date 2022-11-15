@@ -20,6 +20,7 @@ export ANSI_SET_SCROLL_ROWS,
        ANSI_CLEAR_END,
        ANSI_CLEAR_TO_TOP,
        ANSI_CLEAR_SCREEN,
+       ANSI_RESET_COLOR,
        ANSI_HIDE_CURSOR,
        ANSI_SHOW_CURSOR,
        ANSI_SAVE_CURSOR,
@@ -42,15 +43,17 @@ mutable struct TerminalScreen
     controls::Dict{String, Vector{Rect}}
     actions::Vector{Pair}
     update::Function
+    idle::Function
     is_open::Bool
-    function TerminalScreen(text; actions, update=(x)->nothing)
+    function TerminalScreen(text; actions, update=(x)->nothing,
+                                           idle=(x)->nothing)
         text = chomp(remove_border(text))
         rows = split(chomp(text), "\n")
         chars = [Vector{Char}(row) for row in rows]
         height = length(rows)
         width = maximum(length.(chars))
         return new(width, height, text, rows, chars,
-                   Dict(), actions, update, false)
+                   Dict(), actions, update, idle, false)
     end
 end
 
@@ -67,6 +70,7 @@ function draw_screen(ts)
     print(terminal_out,
           ANSI_HIDE_CURSOR,
           ANSI_SET_CURSOR(1,1),
+          ANSI_RESET_COLOR,
           ts.text)
     update_screen(ts)
 end
@@ -232,16 +236,19 @@ end
 """
 Set value of named control to `v`.
 """
-set_control_value(ts, name, v) =
-    set_control_value(ts, name, first(control_by_name(ts, name)), v)
+set_control_value(ts, name, v; kw...) =
+    set_control_value(ts, name, first(control_by_name(ts, name)), v; kw...)
 
-function set_control_value(ts, name, c::Rect, v)
-    v = lpad(v, 10)
+function set_control_value(ts, name, c::Rect, v; pad=10)
+    v = lpad(v, pad)
     row = c.y + c.height÷2
-    col = c.x + c.width - (textwidth(v) + 2)
+    col = c.x + c.width - (textwidth(v) + 1)
+    style = crayon"fg:blue"
     print(terminal_out,
           ANSI_SET_CURSOR(row, col),
-          v)
+          style,
+          v,
+          inv(style))
 end
 
 
@@ -274,9 +281,13 @@ end
 # Event Loop
 
 
-function process_screen(ts::TerminalScreen)
+function process_screen(ts::TerminalScreen; timeout=Inf)
 
     # Wait for touch screen input.
+    if !isready(touch_in; timeout)
+        ts.idle(ts)
+        return
+    end
     touch_point = wait_for_touch(ts, touch_in)
 
     # Find the control that was touched.
@@ -285,7 +296,7 @@ function process_screen(ts::TerminalScreen)
         if control != nothing
             # Execute the touch action.
             process_touch(ts, control, action)
-            draw_screen(ts)
+            update_screen(ts)
         end
     end
 end
@@ -299,7 +310,7 @@ Process `action` for touch event on `control`.
 function process_touch(ts, control, action)
 
     # Highlight the control rectangle.
-    style = crayon"bg:blue"
+    style = crayon"bg:light_magenta"
     set_style(ts, style, control)
 
     try
@@ -311,15 +322,18 @@ function process_touch(ts, control, action)
 
             # Repeat press action while touch remains pressed.
             pressed = Ref(true)
+            press_done = Condition()
             @async begin
-                sleep(0.3)
+                sleep(0.1)
                 while pressed[]
                     press_action(control)
                     sleep(0.1)
                 end
+                notify(press_done)
             end
             wait_for_release(ts, touch_in)
             pressed[] = false
+            wait(press_done)
 
             release_action(control)
         else
@@ -357,6 +371,8 @@ const ANSI_RESET_SCROLL_ROWS            = @CSI r
 const ANSI_CLEAR_END                    = @CSI K(0)
 const ANSI_CLEAR_TO_TOP                 = @CSI J(1)
 const ANSI_CLEAR_SCREEN                 = @CSI J(2)
+const ANSI_RESET_COLOR                  = @CSI m(0)
+const ANSI_FG_DEFAULT                   = @CSI m(39)
 const ANSI_HIDE_CURSOR                  = @CSI l("?25")
 const ANSI_SHOW_CURSOR                  = @CSI h("?25")
 const ANSI_SAVE_CURSOR                  = "\e7"
