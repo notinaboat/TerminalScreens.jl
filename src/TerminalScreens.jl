@@ -11,7 +11,7 @@ export process_screen,
        draw_screen, update_screen, draw_field,
        control_by_name, control_text,
        control_to_left, control_to_right,
-       control_value, set_control_value
+       control_value, set_control_value, set_field_value
 
 export ANSI_SET_SCROLL_ROWS,
        ANSI_RESET_SCROLL_ROWS,
@@ -94,8 +94,8 @@ Find locations where `word` appears on screen.
 function find_word(ts::TerminalScreen, word)
     result = []
     for (row_i, row) in enumerate(ts.rows)
-        for col_i in findall(" " * word * " ", row)
-            col_i = textwidth(row[1:first(col_i)])
+        for col_i in findall(Regex("(^|[ ])" * word * "(\$|[ ])"), row)
+            col_i = ansi_textwidth(row[1:first(col_i)])
             push!(result, (first(col_i)+1, row_i))
         end
     end
@@ -118,15 +118,15 @@ end
 
 Find controls matching `pattern`.
 """
-function control_by_name(ts, name)
+function control_by_name(ts, name; kw...)
     if !haskey(ts.controls, name)
-        ts.controls[name] = _find_control(ts, name)
+        ts.controls[name] = _find_control(ts, name; kw...)
     end
     return ts.controls[name]
 end
 
 
-function _find_control(ts::TerminalScreen, pattern)
+function _find_control(ts::TerminalScreen, pattern; kw...)
 
     # First look for `pattern` verbatim.
     locations = find_word(ts, pattern)
@@ -147,7 +147,7 @@ function _find_control(ts::TerminalScreen, pattern)
             end
         end
     end
-    return [extent(ts, p...) for p in locations]
+    return [extent(ts, p...; kw...) for p in locations]
 end
 
 
@@ -169,7 +169,7 @@ function is_box(ts, row, col)
     col < 1 ||
     row > ts.height ||
     col > ts.width ||
-    ts.chars[row][col] ∈ "─│"
+    ts.chars[row][col] ∈ "─│┤├"
 end
 
 
@@ -178,7 +178,7 @@ Find the extent of the control at point (`col`, `row`).
 
 The control is bounded by box drawing characters (see `is_box()`).
 """
-function extent(ts::TerminalScreen, col, row)
+function extent(ts::TerminalScreen, col, row; oneline=false)
     col_min = col
     col_max = col
     row_min = row
@@ -186,8 +186,8 @@ function extent(ts::TerminalScreen, col, row)
 
     while !is_box(ts, row, col_min) col_min -= 1 end
     while !is_box(ts, row, col_max) col_max += 1 end
-    while !is_box(ts, row_min, col) row_min -= 1 end
-    while !is_box(ts, row_max, col) row_max += 1 end
+    oneline || while !is_box(ts, row_min, col) row_min -= 1 end
+    oneline || while !is_box(ts, row_max, col) row_max += 1 end
 
     TerminalButtons.Rect(col_min, row_min,
                          col_max - col_min,
@@ -236,13 +236,13 @@ end
 """
 Set value of named control to `v`.
 """
-set_control_value(ts, name, v; kw...) =
-    set_control_value(ts, name, first(control_by_name(ts, name)), v; kw...)
+set_control_value(ts, name, v; index=1, pad=10, kw...) =
+    set_control_value(ts, name, control_by_name(ts, name; kw...)[index], v; pad, kw...)
 
-function set_control_value(ts, name, c::Rect, v; pad=10)
+function set_control_value(ts, name, c::Rect, v; pad=10, kw...)
     v = lpad(v, pad)
     row = c.y + c.height÷2
-    col = c.x + c.width - (textwidth(v) + 1)
+    col = c.x + c.width - (ansi_textwidth(v) + 1)
     style = crayon"fg:blue"
     print(terminal_out,
           ANSI_SET_CURSOR(row, col),
@@ -250,6 +250,9 @@ function set_control_value(ts, name, c::Rect, v; pad=10)
           v,
           inv(style))
 end
+
+set_field_value(ts, name, v; kw...) =
+    set_control_value(ts, name, v; oneline=true, kw...)
 
 
 
@@ -280,11 +283,15 @@ end
 
 # Event Loop
 
+global last_idle_time = 0.0
 
 function process_screen(ts::TerminalScreen; timeout=Inf)
 
+    global last_idle_time
+
     # Wait for touch screen input.
-    if !isready(touch_in; timeout)
+    if (time() > last_idle_time + 0.1) && !isready(touch_in; timeout)
+        last_idle_time = time()
         ts.idle(ts)
         return
     end
@@ -377,6 +384,8 @@ const ANSI_HIDE_CURSOR                  = @CSI l("?25")
 const ANSI_SHOW_CURSOR                  = @CSI h("?25")
 const ANSI_SAVE_CURSOR                  = "\e7"
 const ANSI_RESTORE_CURSOR               = "\e8"
+
+ansi_textwidth(x) = textwidth(replace(x, r"\x1b\[[0-9]*m" => ""))
 
 
 xywh(r::Rect) = r.x, r.y, r.width, r.height
