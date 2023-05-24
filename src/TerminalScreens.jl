@@ -322,7 +322,7 @@ function process_touch(ts, control, action)
 
     try
         if action isa Tuple
-            # Process seperate press and release actions.
+            # Process separate press and release actions.
             press_action, release_action = action
 
             press_action(control)
