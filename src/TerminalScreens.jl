@@ -283,15 +283,10 @@ end
 
 # Event Loop
 
-global last_idle_time = 0.0
-
 function process_screen(ts::TerminalScreen; timeout=Inf)
 
-    global last_idle_time
-
     # Wait for touch screen input.
-    if (time() > last_idle_time + 0.1) && !isready(touch_in; timeout)
-        last_idle_time = time()
+    if !isready(touch_in; timeout)
         ts.idle(ts)
         return
     end
