@@ -8,6 +8,7 @@ using Crayons
 
 export TerminalScreen, Rect
 export process_screen,
+       highlight,
        draw_screen, update_screen, draw_field,
        control_by_name, control_text,
        control_to_left, control_to_right,
@@ -42,10 +43,12 @@ mutable struct TerminalScreen
     chars::Vector{Vector{Char}}
     controls::Dict{String, Vector{Rect}}
     actions::Vector{Pair}
+    highlights::Dict{String,Crayon}
     update::Function
     idle::Function
     is_open::Bool
-    function TerminalScreen(text; actions, update=(x)->nothing,
+    function TerminalScreen(text; actions, highlights=[],
+                                           update=(x)->nothing,
                                            idle=(x)->nothing)
         text = chomp(remove_border(text))
         rows = split(chomp(text), "\n")
@@ -53,7 +56,7 @@ mutable struct TerminalScreen
         height = length(rows)
         width = maximum(length.(chars))
         return new(width, height, text, rows, chars,
-                   Dict(), actions, update, idle, false)
+                   Dict(), actions, Dict(highlights), update, idle, false)
     end
 end
 
@@ -67,11 +70,16 @@ update_screen(ts) = ts.update(ts)
 
 
 function draw_screen(ts)
+    text = ts.text
+    for (pattern, style) in ts.highlights
+        highlighted = string(style, pattern, (inv(style)))
+        text = replace(text, pattern => highlighted)
+    end
     print(terminal_out,
           ANSI_HIDE_CURSOR,
           ANSI_SET_CURSOR(1,1),
           ANSI_RESET_COLOR,
-          ts.text)
+          text)
     update_screen(ts)
 end
 
@@ -82,6 +90,13 @@ function remove_border(text)
 
 end
 
+function highlight(ts::TerminalScreen, word, style)
+    for (col, row) in find_word(ts, word)
+        print(terminal_out,
+              ANSI_SET_CURSOR(row, col),
+              style, word, (inv(style)))
+    end
+end
 
 
 # Extracting Controls from Screen
@@ -94,7 +109,7 @@ Find locations where `word` appears on screen.
 function find_word(ts::TerminalScreen, word)
     result = []
     for (row_i, row) in enumerate(ts.rows)
-        for col_i in findall(Regex("(^|[ ])" * word * "(\$|[ ])"), row)
+        for col_i in findall(Regex("(^|[ ])" * word * "(\$|[, ])"), row)
             col_i = ansi_textwidth(row[1:first(col_i)])
             push!(result, (first(col_i)+1, row_i))
         end
